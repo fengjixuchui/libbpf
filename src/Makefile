@@ -8,8 +8,8 @@ else
 	msg = @printf '  %-8s %s%s\n' "$(1)" "$(2)" "$(if $(3), $(3))";
 endif
 
-LIBBPF_MAJOR_VERSION := 0
-LIBBPF_MINOR_VERSION := 8
+LIBBPF_MAJOR_VERSION := 1
+LIBBPF_MINOR_VERSION := 0
 LIBBPF_PATCH_VERSION := 0
 LIBBPF_VERSION := $(LIBBPF_MAJOR_VERSION).$(LIBBPF_MINOR_VERSION).$(LIBBPF_PATCH_VERSION)
 LIBBPF_MAJMIN_VERSION := $(LIBBPF_MAJOR_VERSION).$(LIBBPF_MINOR_VERSION).0
@@ -17,6 +17,15 @@ LIBBPF_MAP_VERSION := $(shell grep -oE '^LIBBPF_([0-9.]+)' libbpf.map | sort -rV
 ifneq ($(LIBBPF_MAJMIN_VERSION), $(LIBBPF_MAP_VERSION))
 $(error Libbpf release ($(LIBBPF_VERSION)) and map ($(LIBBPF_MAP_VERSION)) versions are out of sync!)
 endif
+
+define allow-override
+  $(if $(or $(findstring environment,$(origin $(1))),\
+            $(findstring command line,$(origin $(1)))),,\
+    $(eval $(1) = $(2)))
+endef
+
+$(call allow-override,CC,$(CROSS_COMPILE)cc)
+$(call allow-override,LD,$(CROSS_COMPILE)ld)
 
 TOPDIR = ..
 
@@ -26,8 +35,9 @@ ALL_CFLAGS := $(INCLUDES)
 SHARED_CFLAGS += -fPIC -fvisibility=hidden -DSHARED
 
 CFLAGS ?= -g -O2 -Werror -Wall -std=gnu89
-ALL_CFLAGS += $(CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
-ALL_LDFLAGS += $(LDFLAGS)
+ALL_CFLAGS += $(CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 $(EXTRA_CFLAGS)
+ALL_LDFLAGS += $(LDFLAGS) $(EXTRA_LDFLAGS)
+
 ifdef NO_PKG_CONFIG
 	ALL_LDFLAGS += -lelf -lz
 else

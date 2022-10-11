@@ -16,6 +16,7 @@ RUN apt-get update && apt-get -y install \
         cmake \
         cpu-checker \
         curl \
+        wget \
         flex \
         git \
         jq \
@@ -24,7 +25,10 @@ RUN apt-get update && apt-get -y install \
         rsync \
         software-properties-common \
         sudo \
-        tree
+        tree \
+        zstd \
+        iproute2 \
+        iputils-ping
 
 # amd64 dependencies.
 COPY --from=ld-prefix / /usr/x86_64-linux-gnu/
@@ -33,7 +37,7 @@ RUN ln -fs /etc/resolv.conf /usr/x86_64-linux-gnu/etc/
 ENV QEMU_LD_PREFIX=/usr/x86_64-linux-gnu
 
 # amd64 Github Actions Runner.
-ARG version=2.296.0
+ARG version=2.298.2
 RUN useradd -m actions-runner
 RUN echo "actions-runner ALL=(ALL) NOPASSWD: ALL" >>/etc/sudoers
 RUN echo "Defaults env_keep += \"DEBIAN_FRONTEND\"" >>/etc/sudoers

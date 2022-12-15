@@ -922,7 +922,14 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_CPUMAP,
 	BPF_MAP_TYPE_XSKMAP,
 	BPF_MAP_TYPE_SOCKHASH,
-	BPF_MAP_TYPE_CGROUP_STORAGE,
+	BPF_MAP_TYPE_CGROUP_STORAGE_DEPRECATED,
+	/* BPF_MAP_TYPE_CGROUP_STORAGE is available to bpf programs attaching
+	 * to a cgroup. The newer BPF_MAP_TYPE_CGRP_STORAGE is available to
+	 * both cgroup-attached and other progs and supports all functionality
+	 * provided by BPF_MAP_TYPE_CGROUP_STORAGE. So mark
+	 * BPF_MAP_TYPE_CGROUP_STORAGE deprecated.
+	 */
+	BPF_MAP_TYPE_CGROUP_STORAGE = BPF_MAP_TYPE_CGROUP_STORAGE_DEPRECATED,
 	BPF_MAP_TYPE_REUSEPORT_SOCKARRAY,
 	BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE,
 	BPF_MAP_TYPE_QUEUE,
@@ -935,6 +942,7 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_TASK_STORAGE,
 	BPF_MAP_TYPE_BLOOM_FILTER,
 	BPF_MAP_TYPE_USER_RINGBUF,
+	BPF_MAP_TYPE_CGRP_STORAGE,
 };
 
 /* Note that tracing related programs such as
@@ -2576,14 +2584,19 @@ union bpf_attr {
  * 		* **SOL_SOCKET**, which supports the following *optname*\ s:
  * 		  **SO_RCVBUF**, **SO_SNDBUF**, **SO_MAX_PACING_RATE**,
  * 		  **SO_PRIORITY**, **SO_RCVLOWAT**, **SO_MARK**,
- * 		  **SO_BINDTODEVICE**, **SO_KEEPALIVE**.
+ * 		  **SO_BINDTODEVICE**, **SO_KEEPALIVE**, **SO_REUSEADDR**,
+ * 		  **SO_REUSEPORT**, **SO_BINDTOIFINDEX**, **SO_TXREHASH**.
  * 		* **IPPROTO_TCP**, which supports the following *optname*\ s:
  * 		  **TCP_CONGESTION**, **TCP_BPF_IW**,
  * 		  **TCP_BPF_SNDCWND_CLAMP**, **TCP_SAVE_SYN**,
  * 		  **TCP_KEEPIDLE**, **TCP_KEEPINTVL**, **TCP_KEEPCNT**,
- *		  **TCP_SYNCNT**, **TCP_USER_TIMEOUT**, **TCP_NOTSENT_LOWAT**.
+ * 		  **TCP_SYNCNT**, **TCP_USER_TIMEOUT**, **TCP_NOTSENT_LOWAT**,
+ * 		  **TCP_NODELAY**, **TCP_MAXSEG**, **TCP_WINDOW_CLAMP**,
+ * 		  **TCP_THIN_LINEAR_TIMEOUTS**, **TCP_BPF_DELACK_MAX**,
+ * 		  **TCP_BPF_RTO_MIN**.
  * 		* **IPPROTO_IP**, which supports *optname* **IP_TOS**.
- * 		* **IPPROTO_IPV6**, which supports *optname* **IPV6_TCLASS**.
+ * 		* **IPPROTO_IPV6**, which supports the following *optname*\ s:
+ * 		  **IPV6_TCLASS**, **IPV6_AUTOFLOWLABEL**.
  * 	Return
  * 		0 on success, or a negative error in case of failure.
  *
@@ -2639,7 +2652,7 @@ union bpf_attr {
  * 	Return
  * 		0 on success, or a negative error in case of failure.
  *
- * long bpf_redirect_map(struct bpf_map *map, u32 key, u64 flags)
+ * long bpf_redirect_map(struct bpf_map *map, u64 key, u64 flags)
  * 	Description
  * 		Redirect the packet to the endpoint referenced by *map* at
  * 		index *key*. Depending on its type, this *map* can contain
@@ -2800,12 +2813,10 @@ union bpf_attr {
  * 		  and **BPF_CGROUP_INET6_CONNECT**.
  *
  * 		This helper actually implements a subset of **getsockopt()**.
- * 		It supports the following *level*\ s:
- *
- * 		* **IPPROTO_TCP**, which supports *optname*
- * 		  **TCP_CONGESTION**.
- * 		* **IPPROTO_IP**, which supports *optname* **IP_TOS**.
- * 		* **IPPROTO_IPV6**, which supports *optname* **IPV6_TCLASS**.
+ * 		It supports the same set of *optname*\ s that is supported by
+ * 		the **bpf_setsockopt**\ () helper.  The exceptions are
+ * 		**TCP_BPF_*** is **bpf_setsockopt**\ () only and
+ * 		**TCP_SAVED_SYN** is **bpf_getsockopt**\ () only.
  * 	Return
  * 		0 on success, or a negative error in case of failure.
  *
@@ -5282,7 +5293,7 @@ union bpf_attr {
  *	Return
  *		Nothing. Always succeeds.
  *
- * long bpf_dynptr_read(void *dst, u32 len, struct bpf_dynptr *src, u32 offset, u64 flags)
+ * long bpf_dynptr_read(void *dst, u32 len, const struct bpf_dynptr *src, u32 offset, u64 flags)
  *	Description
  *		Read *len* bytes from *src* into *dst*, starting from *offset*
  *		into *src*.
@@ -5292,7 +5303,7 @@ union bpf_attr {
  *		of *src*'s data, -EINVAL if *src* is an invalid dynptr or if
  *		*flags* is not 0.
  *
- * long bpf_dynptr_write(struct bpf_dynptr *dst, u32 offset, void *src, u32 len, u64 flags)
+ * long bpf_dynptr_write(const struct bpf_dynptr *dst, u32 offset, void *src, u32 len, u64 flags)
  *	Description
  *		Write *len* bytes from *src* into *dst*, starting from *offset*
  *		into *dst*.
@@ -5302,7 +5313,7 @@ union bpf_attr {
  *		of *dst*'s data, -EINVAL if *dst* is an invalid dynptr or if *dst*
  *		is a read-only dynptr or if *flags* is not 0.
  *
- * void *bpf_dynptr_data(struct bpf_dynptr *ptr, u32 offset, u32 len)
+ * void *bpf_dynptr_data(const struct bpf_dynptr *ptr, u32 offset, u32 len)
  *	Description
  *		Get a pointer to the underlying dynptr data.
  *
@@ -5403,7 +5414,7 @@ union bpf_attr {
  *		Drain samples from the specified user ring buffer, and invoke
  *		the provided callback for each such sample:
  *
- *		long (\*callback_fn)(struct bpf_dynptr \*dynptr, void \*ctx);
+ *		long (\*callback_fn)(const struct bpf_dynptr \*dynptr, void \*ctx);
  *
  *		If **callback_fn** returns 0, the helper will continue to try
  *		and drain the next sample, up to a maximum of
@@ -5435,6 +5446,44 @@ union bpf_attr {
  *		**-E2BIG** if user-space has tried to publish a sample which is
  *		larger than the size of the ring buffer, or which cannot fit
  *		within a struct bpf_dynptr.
+ *
+ * void *bpf_cgrp_storage_get(struct bpf_map *map, struct cgroup *cgroup, void *value, u64 flags)
+ *	Description
+ *		Get a bpf_local_storage from the *cgroup*.
+ *
+ *		Logically, it could be thought of as getting the value from
+ *		a *map* with *cgroup* as the **key**.  From this
+ *		perspective,  the usage is not much different from
+ *		**bpf_map_lookup_elem**\ (*map*, **&**\ *cgroup*) except this
+ *		helper enforces the key must be a cgroup struct and the map must also
+ *		be a **BPF_MAP_TYPE_CGRP_STORAGE**.
+ *
+ *		In reality, the local-storage value is embedded directly inside of the
+ *		*cgroup* object itself, rather than being located in the
+ *		**BPF_MAP_TYPE_CGRP_STORAGE** map. When the local-storage value is
+ *		queried for some *map* on a *cgroup* object, the kernel will perform an
+ *		O(n) iteration over all of the live local-storage values for that
+ *		*cgroup* object until the local-storage value for the *map* is found.
+ *
+ *		An optional *flags* (**BPF_LOCAL_STORAGE_GET_F_CREATE**) can be
+ *		used such that a new bpf_local_storage will be
+ *		created if one does not exist.  *value* can be used
+ *		together with **BPF_LOCAL_STORAGE_GET_F_CREATE** to specify
+ *		the initial value of a bpf_local_storage.  If *value* is
+ *		**NULL**, the new bpf_local_storage will be zero initialized.
+ *	Return
+ *		A bpf_local_storage pointer is returned on success.
+ *
+ *		**NULL** if not found or there was an error in adding
+ *		a new bpf_local_storage.
+ *
+ * long bpf_cgrp_storage_delete(struct bpf_map *map, struct cgroup *cgroup)
+ *	Description
+ *		Delete a bpf_local_storage from a *cgroup*.
+ *	Return
+ *		0 on success.
+ *
+ *		**-ENOENT** if the bpf_local_storage cannot be found.
  */
 #define ___BPF_FUNC_MAPPER(FN, ctx...)			\
 	FN(unspec, 0, ##ctx)				\
@@ -5647,6 +5696,8 @@ union bpf_attr {
 	FN(tcp_raw_check_syncookie_ipv6, 207, ##ctx)	\
 	FN(ktime_get_tai_ns, 208, ##ctx)		\
 	FN(user_ringbuf_drain, 209, ##ctx)		\
+	FN(cgrp_storage_get, 210, ##ctx)		\
+	FN(cgrp_storage_delete, 211, ##ctx)		\
 	/* */
 
 /* backwards-compatibility macros for users of __BPF_FUNC_MAPPER that don't
@@ -6397,6 +6448,7 @@ struct bpf_sock_ops {
 				 * the outgoing header has not
 				 * been written yet.
 				 */
+	__u64 skb_hwtstamp;
 };
 
 /* Definitions for bpf_sock_ops_cb_flags */
@@ -6835,6 +6887,16 @@ struct bpf_timer {
 } __attribute__((aligned(8)));
 
 struct bpf_dynptr {
+	__u64 :64;
+	__u64 :64;
+} __attribute__((aligned(8)));
+
+struct bpf_list_head {
+	__u64 :64;
+	__u64 :64;
+} __attribute__((aligned(8)));
+
+struct bpf_list_node {
 	__u64 :64;
 	__u64 :64;
 } __attribute__((aligned(8)));

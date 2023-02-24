@@ -34,7 +34,6 @@
 #include <linux/limits.h>
 #include <linux/perf_event.h>
 #include <linux/ring_buffer.h>
-#include <linux/version.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -868,42 +867,6 @@ bpf_object__add_programs(struct bpf_object *obj, Elf_Data *sec_data,
 	}
 
 	return 0;
-}
-
-__u32 get_kernel_version(void)
-{
-	/* On Ubuntu LINUX_VERSION_CODE doesn't correspond to info.release,
-	 * but Ubuntu provides /proc/version_signature file, as described at
-	 * https://ubuntu.com/kernel, with an example contents below, which we
-	 * can use to get a proper LINUX_VERSION_CODE.
-	 *
-	 *   Ubuntu 5.4.0-12.15-generic 5.4.8
-	 *
-	 * In the above, 5.4.8 is what kernel is actually expecting, while
-	 * uname() call will return 5.4.0 in info.release.
-	 */
-	const char *ubuntu_kver_file = "/proc/version_signature";
-	__u32 major, minor, patch;
-	struct utsname info;
-
-	if (faccessat(AT_FDCWD, ubuntu_kver_file, R_OK, AT_EACCESS) == 0) {
-		FILE *f;
-
-		f = fopen(ubuntu_kver_file, "r");
-		if (f) {
-			if (fscanf(f, "%*s %*s %d.%d.%d\n", &major, &minor, &patch) == 3) {
-				fclose(f);
-				return KERNEL_VERSION(major, minor, patch);
-			}
-			fclose(f);
-		}
-		/* something went wrong, fall back to uname() approach */
-	}
-
-	uname(&info);
-	if (sscanf(info.release, "%u.%u.%u", &major, &minor, &patch) != 3)
-		return 0;
-	return KERNEL_VERSION(major, minor, patch);
 }
 
 static const struct btf_member *
@@ -4382,7 +4345,7 @@ int bpf_map__reuse_fd(struct bpf_map *map, int fd)
 	char *new_name;
 
 	memset(&info, 0, len);
-	err = bpf_obj_get_info_by_fd(fd, &info, &len);
+	err = bpf_map_get_info_by_fd(fd, &info, &len);
 	if (err && errno == EINVAL)
 		err = bpf_get_map_info_from_fdinfo(fd, &info);
 	if (err)
@@ -4766,7 +4729,7 @@ static int probe_module_btf(void)
 	 * kernel's module BTF support coincides with support for
 	 * name/name_len fields in struct bpf_btf_info.
 	 */
-	err = bpf_obj_get_info_by_fd(fd, &info, &len);
+	err = bpf_btf_get_info_by_fd(fd, &info, &len);
 	close(fd);
 	return !err;
 }
@@ -4929,7 +4892,7 @@ static bool map_is_reuse_compat(const struct bpf_map *map, int map_fd)
 	int err;
 
 	memset(&map_info, 0, map_info_len);
-	err = bpf_obj_get_info_by_fd(map_fd, &map_info, &map_info_len);
+	err = bpf_map_get_info_by_fd(map_fd, &map_info, &map_info_len);
 	if (err && errno == EINVAL)
 		err = bpf_get_map_info_from_fdinfo(map_fd, &map_info);
 	if (err) {
@@ -5474,7 +5437,7 @@ static int load_module_btfs(struct bpf_object *obj)
 		info.name = ptr_to_u64(name);
 		info.name_len = sizeof(name);
 
-		err = bpf_obj_get_info_by_fd(fd, &info, &len);
+		err = bpf_btf_get_info_by_fd(fd, &info, &len);
 		if (err) {
 			err = -errno;
 			pr_warn("failed to get BTF object #%d info: %d\n", id, err);
@@ -9067,9 +9030,9 @@ static int libbpf_find_prog_btf_id(const char *name, __u32 attach_prog_fd)
 	int err;
 
 	memset(&info, 0, info_len);
-	err = bpf_obj_get_info_by_fd(attach_prog_fd, &info, &info_len);
+	err = bpf_prog_get_info_by_fd(attach_prog_fd, &info, &info_len);
 	if (err) {
-		pr_warn("failed bpf_obj_get_info_by_fd for FD %d: %d\n",
+		pr_warn("failed bpf_prog_get_info_by_fd for FD %d: %d\n",
 			attach_prog_fd, err);
 		return err;
 	}
@@ -11710,17 +11673,22 @@ struct perf_buffer *perf_buffer__new(int map_fd, size_t page_cnt,
 	const size_t attr_sz = sizeof(struct perf_event_attr);
 	struct perf_buffer_params p = {};
 	struct perf_event_attr attr;
+	__u32 sample_period;
 
 	if (!OPTS_VALID(opts, perf_buffer_opts))
 		return libbpf_err_ptr(-EINVAL);
+
+	sample_period = OPTS_GET(opts, sample_period, 1);
+	if (!sample_period)
+		sample_period = 1;
 
 	memset(&attr, 0, attr_sz);
 	attr.size = attr_sz;
 	attr.config = PERF_COUNT_SW_BPF_OUTPUT;
 	attr.type = PERF_TYPE_SOFTWARE;
 	attr.sample_type = PERF_SAMPLE_RAW;
-	attr.sample_period = 1;
-	attr.wakeup_events = 1;
+	attr.sample_period = sample_period;
+	attr.wakeup_events = sample_period;
 
 	p.attr = &attr;
 	p.sample_cb = sample_cb;
@@ -11773,7 +11741,7 @@ static struct perf_buffer *__perf_buffer__new(int map_fd, size_t page_cnt,
 	/* best-effort sanity checks */
 	memset(&map, 0, sizeof(map));
 	map_info_len = sizeof(map);
-	err = bpf_obj_get_info_by_fd(map_fd, &map, &map_info_len);
+	err = bpf_map_get_info_by_fd(map_fd, &map, &map_info_len);
 	if (err) {
 		err = -errno;
 		/* if BPF_OBJ_GET_INFO_BY_FD is supported, will return

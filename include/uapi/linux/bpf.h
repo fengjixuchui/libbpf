@@ -986,6 +986,7 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_LSM,
 	BPF_PROG_TYPE_SK_LOOKUP,
 	BPF_PROG_TYPE_SYSCALL, /* a program that can execute syscalls */
+	BPF_PROG_TYPE_NETFILTER,
 };
 
 enum bpf_attach_type {
@@ -1034,6 +1035,7 @@ enum bpf_attach_type {
 	BPF_TRACE_KPROBE_MULTI,
 	BPF_LSM_CGROUP,
 	BPF_STRUCT_OPS,
+	BPF_NETFILTER,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -1050,6 +1052,7 @@ enum bpf_link_type {
 	BPF_LINK_TYPE_PERF_EVENT = 7,
 	BPF_LINK_TYPE_KPROBE_MULTI = 8,
 	BPF_LINK_TYPE_STRUCT_OPS = 9,
+	BPF_LINK_TYPE_NETFILTER = 10,
 
 	MAX_BPF_LINK_TYPE,
 };
@@ -1270,6 +1273,9 @@ enum {
 
 /* Create a map that will be registered/unregesitered by the backed bpf_link */
 	BPF_F_LINK		= (1U << 13),
+
+/* Get path from provided FD in BPF_OBJ_PIN/BPF_OBJ_GET commands */
+	BPF_F_PATH_FD		= (1U << 14),
 };
 
 /* Flags for BPF_PROG_QUERY. */
@@ -1407,12 +1413,24 @@ union bpf_attr {
 		__aligned_u64	fd_array;	/* array of FDs */
 		__aligned_u64	core_relos;
 		__u32		core_relo_rec_size; /* sizeof(struct bpf_core_relo) */
+		/* output: actual total log contents size (including termintaing zero).
+		 * It could be both larger than original log_size (if log was
+		 * truncated), or smaller (if log buffer wasn't filled completely).
+		 */
+		__u32		log_true_size;
 	};
 
 	struct { /* anonymous struct used by BPF_OBJ_* commands */
 		__aligned_u64	pathname;
 		__u32		bpf_fd;
 		__u32		file_flags;
+		/* Same as dirfd in openat() syscall; see openat(2)
+		 * manpage for details of path FD and pathname semantics;
+		 * path_fd should accompanied by BPF_F_PATH_FD flag set in
+		 * file_flags field, otherwise it should be set to zero;
+		 * if BPF_F_PATH_FD flag is not set, AT_FDCWD is assumed.
+		 */
+		__s32		path_fd;
 	};
 
 	struct { /* anonymous struct used by BPF_PROG_ATTACH/DETACH commands */
@@ -1492,6 +1510,11 @@ union bpf_attr {
 		__u32		btf_size;
 		__u32		btf_log_size;
 		__u32		btf_log_level;
+		/* output: actual total log contents size (including termintaing zero).
+		 * It could be both larger than original log_size (if log was
+		 * truncated), or smaller (if log buffer wasn't filled completely).
+		 */
+		__u32		btf_log_true_size;
 	};
 
 	struct {
@@ -1513,7 +1536,7 @@ union bpf_attr {
 	struct { /* struct used by BPF_LINK_CREATE command */
 		union {
 			__u32		prog_fd;	/* eBPF program to attach */
-			__u32		map_fd;		/* eBPF struct_ops to attach */
+			__u32		map_fd;		/* struct_ops to attach */
 		};
 		union {
 			__u32		target_fd;	/* object to attach to */
@@ -1550,6 +1573,12 @@ union bpf_attr {
 				 */
 				__u64		cookie;
 			} tracing;
+			struct {
+				__u32		pf;
+				__u32		hooknum;
+				__s32		priority;
+				__u32		flags;
+			} netfilter;
 		};
 	} link_create;
 
@@ -3149,6 +3178,10 @@ union bpf_attr {
  *		**BPF_FIB_LOOKUP_DIRECT**
  *			Do a direct table lookup vs full lookup using FIB
  *			rules.
+ *		**BPF_FIB_LOOKUP_TBID**
+ *			Used with BPF_FIB_LOOKUP_DIRECT.
+ *			Use the routing table ID present in *params*->tbid
+ *			for the fib lookup.
  *		**BPF_FIB_LOOKUP_OUTPUT**
  *			Perform lookup from an egress perspective (default is
  *			ingress).
@@ -6400,6 +6433,12 @@ struct bpf_link_info {
 		struct {
 			__u32 map_id;
 		} struct_ops;
+		struct {
+			__u32 pf;
+			__u32 hooknum;
+			__s32 priority;
+			__u32 flags;
+		} netfilter;
 	};
 } __attribute__((aligned(8)));
 
@@ -6797,6 +6836,7 @@ enum {
 	BPF_FIB_LOOKUP_DIRECT  = (1U << 0),
 	BPF_FIB_LOOKUP_OUTPUT  = (1U << 1),
 	BPF_FIB_LOOKUP_SKIP_NEIGH = (1U << 2),
+	BPF_FIB_LOOKUP_TBID    = (1U << 3),
 };
 
 enum {
@@ -6857,9 +6897,19 @@ struct bpf_fib_lookup {
 		__u32		ipv6_dst[4];  /* in6_addr; network order */
 	};
 
-	/* output */
-	__be16	h_vlan_proto;
-	__be16	h_vlan_TCI;
+	union {
+		struct {
+			/* output */
+			__be16	h_vlan_proto;
+			__be16	h_vlan_TCI;
+		};
+		/* input: when accompanied with the
+		 * 'BPF_FIB_LOOKUP_DIRECT | BPF_FIB_LOOKUP_TBID` flags, a
+		 * specific routing table to use for the fib lookup.
+		 */
+		__u32	tbid;
+	};
+
 	__u8	smac[6];     /* ETH_ALEN */
 	__u8	dmac[6];     /* ETH_ALEN */
 };
@@ -6974,6 +7024,10 @@ struct bpf_rb_node {
 	__u64 :64;
 	__u64 :64;
 } __attribute__((aligned(8)));
+
+struct bpf_refcount {
+	__u32 :32;
+} __attribute__((aligned(4)));
 
 struct bpf_sysctl {
 	__u32	write;		/* Sysctl is being read (= 0) or written (= 1).
